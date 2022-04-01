@@ -1,0 +1,429 @@
+---
+title: "Shiny AirBnB Paris Project"
+author: "Dylan CASSIDY"
+date: '2022-03-31'
+output:
+  html_document: default
+---
+
+
+
+### Link to published App on shinyapps.io -> https://cassidyd90.shinyapps.io/App_Complete/
+
+
+
+#Start libraries required for app
+```{r}
+library(shiny)
+library(shinydashboard)
+library(dplyr)
+library(tidyr)
+library(data.table)
+library(ggplot2)
+library(leaflet)
+library(DT)
+library(stringr)
+library(plotly)
+library(rgdal)
+library(ggthemes)
+library(rsconnect)
+```
+
+#Load in the data
+```{r}
+#Main data
+all_data <- load("AirBnB.Rdata")
+
+#Subset of main data
+air_data <- L
+
+#geojson map used for polygons on arrond map
+region_map <- readOGR("arrondissements.geojson")
+```
+
+
+#After reasearch on AirBnB it is clear that some of the data needs to be cleaned
+```{r}
+#Any properties with 6+ bathrooms were hotels, so filter the data to less than 6 bathrooms
+air_data <- air_data %>% filter(bathrooms > 0 & bathrooms < 6)
+
+#Round bathrooms down to zero decimal places
+air_data$bathrooms <- round(air_data$bathrooms, 0)
+
+#Any properties with 8+ bedrooms were hotels, so filter the data to less than 8 bedrooms
+air_data <- air_data %>% filter(bedrooms > 0 & bedrooms < 8 )
+
+#Any properties with 15+ beds were hotels or hostels, so filter the data to less than 15 beds
+air_data <- air_data %>% filter(beds > 0 & beds < 15)
+
+```
+
+#Cleaning of Price
+```{r}
+#Remove dollar signs and change type to numeric
+air_data$price = as.numeric(gsub("\\$", "", air_data$price))
+
+#Replace the NAs by the mean of price
+air_data$price[is.na(air_data$price)] <- mean(air_data$price, na.rm = TRUE)
+
+#Check if there remain any NA
+which(is.na(air_data$price))
+
+```
+
+
+#Fix misspelled names of arrondisements and rename column
+```{r}
+
+#Rename column name
+names(air_data)[names(air_data) == "neighbourhood_cleansed"] <- "neigh"
+
+
+#Fix spelling character mistakes 
+air_data$neigh <- gsub('PanthÃ©on', 'Pantheon',air_data$neigh)
+air_data$neigh <- gsub('EntrepÃ´t', 'Entrepot',air_data$neigh)
+air_data$neigh <- gsub('OpÃ©ra', 'Opera',air_data$neigh)
+air_data$neigh <- gsub('Ã‰lysÃ©e', 'Elysee',air_data$neigh)
+air_data$neigh <- gsub('MÃ©nilmontant', 'Mesnilmontant',air_data$neigh)
+air_data$neigh <- gsub('HÃ´tel-de-Ville', 'Hotel-de-Ville',air_data$neigh)
+
+#Verify 
+print(unique(air_data$neigh))
+
+```
+
+#Filter data to only have city as Paris
+```{r}
+#Filter all rows of city column to only have up to 5 letters
+air_data$city <- substr(air_data$city, 0, 5)
+
+#Filter data for city to equal Paris
+air_data <- air_data %>% filter(city == "Paris")
+
+#verify
+print(unique(air_data$city))
+```
+
+#Clean zipcode data
+```{r}
+#Change type to numeric
+air_data$zipcode <- as.numeric(air_data$zipcode)
+
+#Filter the data only to include the 20 arrondisements of Paris
+air_data <- air_data %>% filter(zipcode != "" & zipcode <= 20)
+
+#Rename the arrondisements with the full postal code
+air_data$zipcode[air_data$zipcode == 01] <- 75001
+air_data$zipcode[air_data$zipcode == 02] <- 75002
+air_data$zipcode[air_data$zipcode == 03] <- 75003
+air_data$zipcode[air_data$zipcode == 04] <- 75004
+air_data$zipcode[air_data$zipcode == 05] <- 75005
+air_data$zipcode[air_data$zipcode == 06] <- 75006
+air_data$zipcode[air_data$zipcode == 07] <- 75007
+air_data$zipcode[air_data$zipcode == 08] <- 75008
+air_data$zipcode[air_data$zipcode == 09] <- 75009
+air_data$zipcode[air_data$zipcode == 10] <- 75010
+air_data$zipcode[air_data$zipcode == 11] <- 75011
+air_data$zipcode[air_data$zipcode == 12] <- 75012
+air_data$zipcode[air_data$zipcode == 13] <- 75013
+air_data$zipcode[air_data$zipcode == 14] <- 75014
+air_data$zipcode[air_data$zipcode == 15] <- 75015
+air_data$zipcode[air_data$zipcode == 16] <- 75016
+air_data$zipcode[air_data$zipcode == 17] <- 75017
+air_data$zipcode[air_data$zipcode == 18] <- 75018
+air_data$zipcode[air_data$zipcode == 19] <- 75019
+air_data$zipcode[air_data$zipcode == 20] <- 75020
+
+#Verify
+print(unique(air_data$zipcode))
+
+```
+
+#Calculations needed for number of properties by owner
+```{r}
+#Count number of properties by owner
+q <- aggregate(list(Count = air_data$id), by=list(Host = air_data$host_id), FUN=length)
+
+```
+
+#Data needed for labels of leaflet map
+```{r}
+#Create new column of prices with no decimal place
+air_data$price2 = round(air_data$price,0)
+
+#Add the word euro after each value in column
+air_data$price2 <- paste(air_data$price2, "euro", sep=" ")
+
+```
+
+#Data needed for frequency of visits over time
+```{r}
+#Change name of column in air_data to match with data in R dataset
+names(air_data)[names(air_data) == "id"] <- "listing_id"
+
+#Join both datasets by listing_id and create new dataset
+joined <- inner_join(air_data, R, by = "listing_id")
+
+#Select needed columns for new dataset
+joined <- select(joined, listing_id, neigh, date)
+
+#Change date from year to factor
+joined$date <- as.Date(joined$date)
+
+#Extract year from date in new column
+joined$year <- as.numeric(format(joined$date, "%Y"))
+
+#Put neigh as factor
+joined$neigh <- as.factor(joined$neigh)
+
+#Put year as factor
+joined$year <- as.factor(joined$year)
+```
+
+#Calculations needed for infoBoxes
+```{r}
+#Average price of listings in Paris
+aver <- mean(air_data$price, na.rm=TRUE, is.numeric=TRUE)
+aver <- round(aver,2)
+
+#Average rating of hosts in Paris
+rev <- mean(air_data$review_scores_rating, na.rm=TRUE, is.numeric=TRUE)
+rev <- round(rev,0)
+
+
+```
+
+
+#Call the app
+```{r}
+ui <- dashboardPage(
+  
+  skin = "black",
+  title = "AirBnB Paris Analysis",
+
+  
+  #Title of dashboard
+  dashboardHeader(title = "AirBnB Paris Analysis"),
+  
+  #Sidebar content/tabs
+  dashboardSidebar(
+
+    sidebarMenu(
+      menuItem("Overview", tabName = "overview", icon = icon("airbnb")),
+      menuItem("Price and Features", tabName = "features", icon = icon("bath")),
+      menuItem("Apartments Per Owner", tabName = "owner", icon = icon("user-check")),
+      menuItem("Price Per Arrondisement", tabName = "arrond", icon=icon("location-arrow")),
+      menuItem("Visit Frequncy", tabName = "freq", icon = icon("calendar-alt")),
+      menuItem("About", tabName = "about", icon = icon("user-alt"))
+    )),
+  
+  
+  dashboardBody(
+    
+    
+    
+    tabItems(
+      
+      #Overview tab content
+      tabItem(tabName = "overview",
+              h2("Overview of the data"),
+              fluidRow(
+                
+                #BoxOutputs for different data to be displayed
+                infoBoxOutput("nlistingsBox", width = 8),
+                infoBoxOutput("hostBox", width = 8),
+                infoBoxOutput("shostBox", width = 8),
+                infoBoxOutput("revBox", width = 8),
+                infoBoxOutput("expensiveBox", width = 8),
+                infoBoxOutput("averageBox", width = 8))),
+      
+      
+              
+      # First tab content
+      tabItem(tabName = "features",
+              h2("Prices depending on Features"),
+        fluidRow(
+          
+          #Plotly output of prices according to features
+          box(title = "Prices and Features", width = 12, background = "red",  solidHeader = TRUE, plotlyOutput("plotfeatures", height = 450)),
+
+          box(title = "Prices according to Features", width = 12, background = "light-blue", solidHeader = TRUE,  collapsible = TRUE, "Choose which feature to compare",
+              
+      br(),
+      
+      selectInput("features", "Features:", 
+                    choices = c("Beds", "Bathrooms","Bedrooms"),
+                    selected = "Beds")))),
+      
+      
+      
+    
+    # Second tab content
+      tabItem(tabName = "owner",
+        h2("Number of Apartments Per Owner"),
+        fluidRow(
+          
+           #Data table output of numeber of apartments per owner
+          box(title = "Apartments Per Owner", width = 12, background = "red", solidHeader = TRUE, DT::dataTableOutput("owner", height = 250)),
+          
+          #Slider input which shows how many apartments owned
+          box(
+  title = "Number of Apartments", width = 12, background = "light-blue", solidHeader = TRUE, collapsible = TRUE,
+  "Select number of apartments", br(),
+  sliderInput("num", "Slider input:", 1, 80, 10)))),
+    
+    
+  
+  
+     # Third tab content
+      tabItem(tabName = "arrond",
+        h2("Average Price By Arrondisement"),
+        fluidRow(
+          
+          #Map showing listings per arrondisement
+          box(title = "Paris Arrondisement", width = 12, background = "red", solidHeader = TRUE, leafletOutput("map", height = 250)),
+          
+          box(title = "Select Arrondisement", width = 12, background = "light-blue", solidHeader = TRUE, selectizeInput("selected", "Select Arrondisement", unique(air_data$neigh))),
+
+          
+           #Data table output of average price of listing per arrondisement
+          box(title = "Average Per Arrondisement", width = 12, background = "yellow", DT::dataTableOutput("average", height = 250)))),
+  
+  
+  
+  
+     #Fourth tab content
+      tabItem(tabName = "freq",
+        h2("Frequency of visits to arrondisements over times"),
+        fluidRow(
+          
+          #Interactive plot showing visit frequency over time
+          box(title = "Bar Plot visit frequency", width = 12, background = "red", solidHeader = TRUE, plotlyOutput("bar", height = 600)))
+      ),
+  
+  
+  
+     #Fifth tab content
+      tabItem(tabName = "about",
+        h2("About Me"),
+        fluidPage(
+                h4("Dylan Cassidy is a student at Data ScienceTech Institute (Paris/Sophia) currently in the applied MSc in Applied Data Analystics course.", 
+                   br(),
+                   "This project was part of the course Big Data Processing With R."),
+                br(),
+                h4(a(icon= icon("github-alt"),"Github Link", href="https://github.com/Cassidyd90")),
+                br(),
+                h4(a(icon= icon("linkedin"),"LinkedIn Link",href="https://www.linkedin.com/in/cassidyd90/"))))
+    )))
+    
+
+
+#Server
+server <- function(input, output) { 
+  
+  #Boxoutput numer of listings in Paris
+output$nlistingsBox <- renderInfoBox({
+    infoBox(
+      "Number of Listings", paste0(print(length(unique(air_data[["listing_id"]])))), icon = icon("city"),
+      color = "red", fill = TRUE)}) 
+
+  #Boxoutput number of hosts in Paris
+output$hostBox <- renderInfoBox({
+    infoBox(
+      "Number of Hosts", paste0(print(length(unique(air_data[["host_id"]])))), icon = icon("user"), color = "light-blue", fill = TRUE)})
+
+  #Boxoutput number of superhosts in Paris
+output$shostBox <- renderInfoBox({
+    infoBox(
+      "Number of Super Hosts", paste0(print(count(air_data %>% filter(host_is_superhost == "t")))), icon = icon("user-check"), color = "yellow", fill = TRUE)}) 
+
+  #Boxoutput average rating for hosts in Paris
+output$revBox <- renderInfoBox({
+    infoBox(
+      "Average Rating of Hosts", paste0(print(rev), "%"), icon = icon("star"),
+      color = "purple", fill = TRUE)}) 
+
+   #Boxoutput most expensive listing in Paris
+output$expensiveBox <- renderInfoBox({
+    infoBox(
+      "Most Expensive Listing", paste0(print(max(air_data$price, na.rm = TRUE)), "€"), icon = icon("euro-sign"), color = "red", fill = TRUE)}) 
+
+   #Boxoutput average price of listings in Paris
+output$averageBox <- renderInfoBox({
+    infoBox(
+      "Average Price of Listing", paste0(print(aver), "€"), icon = icon("coins"), color = "blue", fill = TRUE)})  
+
+
+#Output for Tab 1 Prices and Features
+output$plotfeatures <- renderPlotly({
+  
+#Plotly output with if statements depending on user choice
+if(input$features == 'Beds'){
+    
+p <- ggplot(air_data, aes(x = factor(beds), y = price)) + 
+  stat_summary(aes(fill = factor(beds)),fun = "mean", geom = "bar") + labs(title = "Average Price According to Number of Beds", subtitle = "AirBnB Paris Accomodations", caption="source: Air BnB Paris", x = "Number of Beds", y = "Average Price of Rental €") + theme_clean()
+    
+  }
+  
+if(input$features == 'Bathrooms'){
+    
+p <- ggplot(air_data, aes(x = factor(bathrooms), y = price)) + 
+  stat_summary(aes(fill = factor(bathrooms)),fun = "mean", geom = "bar") + labs(title = "Average Price According to Number of Bedrooms", subtitle = "AirBnB Paris Accomodations", caption="source: Air BnB Paris", x = "Number of Bedrooms", y = "Average Price of Rental €") + theme_clean()
+
+  }
+  
+if(input$features == 'Bedrooms'){
+    
+p <- ggplot(air_data, aes(x = factor(bedrooms), y = price)) + 
+  stat_summary(aes(fill = factor(bedrooms)),fun = "mean", geom = "bar") + labs(title = "Average Price According to Number of Bedrooms", subtitle = "AirBnB Paris Accomodations", caption="source: Air BnB Paris", x = "Number of Bedrooms", y = "Average Price of Rental €") + theme_clean()
+
+  }
+  
+ggplotly(p)
+  
+}) 
+
+
+#Output tab 2 
+output$owner <- DT::renderDT({
+    dt <- q[q$Count >= input$num[1],]
+    dt[,c("Host","Count")]
+    })
+
+#Output tab 3
+ ParisMap <- reactive({
+    selected = input$selected
+    
+    air_data %>%
+      select(neigh, longitude,latitude,price,price2) %>%
+      filter(neigh == selected)
+  })
+
+#Arronds are dotted when chosen
+   output$map <- renderLeaflet({
+    leaflet(region_map) %>% addPolygons() %>% setView(lng = 2.349502, lat = 48.859294, zoom = 11.4) %>% 
+     addProviderTiles(providers$CartoDB.Positron) %>% addMarkers(lng = ParisMap()$longitude, lat = ParisMap()$latitude, label = ParisMap()$price2)
+  })
+  
+   #Table of the arrondisement names and average price
+  output$average <- DT::renderDT({
+    aggregate(list(Average_Price = air_data$price), list(Arrondisement = air_data$neigh), FUN = function(x) round(mean(x), digits = 2))
+  })
+
+
+
+#Output tab 4    
+output$bar <- renderPlotly({
+    
+      t <- ggplot(joined, aes(neigh)) + geom_bar(aes(fill = year)) + scale_fill_brewer(palette="Pastel2")+ ggtitle("Frequency of visits per arrond over years") + xlab("Arronds") + ylab("Number of visits") + theme(axis.text.x = element_text(angle = 70, hjust = 1))
+      
+      ggplotly(t)
+})
+
+}  
+
+shinyApp(ui, server)
+
+
+```
+
