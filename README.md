@@ -4,7 +4,8 @@
 ***
 The objective is to create an interactive app using R Shiny to explore and showcase data from AirBnB Paris from 2016.
 
-You can access the app live in your browser here -> https://cassidyd90.shinyapps.io/App_Complete/
+You can access the app live in your browser here 
+* [Shiny app] (https://cassidyd90.shinyapps.io/App_Complete/ "shinyapps.io)
 ***
 ## Packages Used In R
 * shiny
